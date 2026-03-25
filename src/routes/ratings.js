@@ -1,10 +1,15 @@
 import { Router } from "express";
 import multer from "multer";
+import crypto from "crypto";
+import path from "path";
 import { z } from "zod";
 import { pool } from "../db.js";
 
 const router = Router();
-const upload = multer({ dest: "uploads/" });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 const ratingSchema = z.object({
   establishmentId: z.coerce.number().int().positive(),
@@ -30,7 +35,13 @@ router.post("/", upload.single("photo"), async (req, res) => {
 
     const clientIp = req.ip;
     const userAgent = req.get("user-agent") || "";
-    const photoPath = req.file ? `/uploads/${req.file.filename}` : null;
+    let photoPath = null;
+    if (req.file) {
+      const filename = `${crypto.randomUUID()}${path.extname(req.file.originalname || "")}`;
+      const fs = await import("fs/promises");
+      await fs.writeFile(`uploads/${filename}`, req.file.buffer);
+      photoPath = `/uploads/${filename}`;
+    }
 
     const result = await pool.query(
       `
@@ -94,7 +105,12 @@ router.get("/recent", async (req, res) => {
       [establishmentId]
     );
 
-    res.json({ ok: true, photos: result.rows.filter((r) => r.photo_path) });
+    const rows = result.rows || [];
+    res.json({
+      ok: true,
+      photos: rows.filter((r) => r.photo_path),
+      notes: rows.filter((r) => r.note && r.note.trim().length > 0),
+    });
   } catch (err) {
     console.error("GET /api/ratings/recent failed", err);
     res.status(500).json({ ok: false, error: "Failed to load photos" });
